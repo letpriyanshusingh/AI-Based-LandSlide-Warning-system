@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Map | NLMS</title>
+    <meta name="description" content="Interactive satellite map showing landslide risk zones, road networks, and estimated impact areas across India.">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        /* map fills available space below nav */
+        #map { width: 100%; height: calc(100vh - 210px); min-height: 480px; position: relative; }
+
+        /* Google-Maps-style "Use Ctrl+Scroll to zoom" overlay */
+        .scroll-overlay {
+            position: absolute; inset: 0; z-index: 999;
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(0,0,0,0.45);
+            color: white; font-size: 16px; font-weight: 600;
+            pointer-events: none; opacity: 0;
+            transition: opacity 0.3s;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            letter-spacing: 0.3px;
+        }
+        .scroll-overlay.visible { opacity: 1; }
+
+        /* custom map control buttons (home, locate, fullscreen) */
+        .map-btn {
+            display: flex; align-items: center; justify-content: center;
+            width: 32px; height: 32px;
+            background: white; border: 1px solid #ccc; border-radius: 3px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+            cursor: pointer; color: #333;
+            transition: background 0.15s;
+        }
+        .map-btn:hover { background: #eee; }
+        .map-btn + .map-btn { margin-top: 4px; }
+        .map-btn svg { width: 16px; height: 16px; fill: #333; }
+
+        /* layer control — styled to match govt portal */
+        .leaflet-control-layers {
+            border: none !important;
+            border-radius: 6px !important;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.25) !important;
+            overflow: hidden;
+            font-family: 'Segoe UI', Arial, sans-serif !important;
+            min-width: 200px;
+        }
+        .leaflet-control-layers-expanded {
+            padding: 0 !important;
+            background: white !important;
+        }
+        .leaflet-control-layers-base,
+        .leaflet-control-layers-overlays {
+            padding: 8px 14px !important;
+        }
+        .leaflet-control-layers-base {
+            border-bottom: 1px solid #e0e0e0;
+        }
+        /* section headings via ::before */
+        .leaflet-control-layers-base::before {
+            content: 'BASE MAP';
+            display: block;
+            font-size: 10px;
+            font-weight: 700;
+            color: #034da2;
+            letter-spacing: 0.8px;
+            margin-bottom: 6px;
+            padding-bottom: 4px;
+            border-bottom: 2px solid #034da2;
+        }
+        .leaflet-control-layers-overlays::before {
+            content: 'OVERLAYS';
+            display: block;
+            font-size: 10px;
+            font-weight: 700;
+            color: #034da2;
+            letter-spacing: 0.8px;
+            margin-bottom: 6px;
+            padding-bottom: 4px;
+            border-bottom: 2px solid #034da2;
+        }
+        .leaflet-control-layers label {
+            display: flex !important;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 0;
+            font-size: 12px !important;
+            color: #333;
+            cursor: pointer;
+        }
+        .leaflet-control-layers label:hover {
+            color: #034da2;
+        }
+        .leaflet-control-layers-selector {
+            margin: 0 !important;
+            width: 15px; height: 15px;
+            accent-color: #034da2;
+            cursor: pointer;
+        }
+        .leaflet-control-layers-separator {
+            display: none !important;
+        }
+
+        /* impact legend panel — bottom-right of map */
+        .impact-legend {
+            background: rgba(255,255,255,0.95);
+            padding: 12px 16px;
+            border-radius: 6px;
+            font-size: 12px;
+            line-height: 1.6;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+            max-width: 220px;
+        }
+        .impact-legend h4 {
+            margin: 0 0 6px;
+            font-size: 13px;
+            color: #1a1a6e;
+            border-bottom: 2px solid #034da2;
+            padding-bottom: 4px;
+        }
+        .impact-legend .row { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+        .impact-legend .swatch {
+            display: inline-block; width: 14px; height: 14px;
+            border-radius: 50%; flex-shrink: 0;
+        }
+
+        /* popup overrides for gov portal feel */
+        .leaflet-popup-content-wrapper {
+            border-radius: 6px !important;
+            font-family: 'Segoe UI', Arial, sans-serif;
+        }
+        .leaflet-popup-content { margin: 12px 14px !important; font-size: 13px; line-height: 1.6; }
+        .leaflet-popup-content h3 { margin: 0 0 4px; font-size: 15px; color: #1a1a6e; }
+        .leaflet-popup-content .meta { font-size: 11px; color: #888; margin-bottom: 6px; }
+        .leaflet-popup-content .badge {
+            display: inline-block; padding: 2px 8px; border-radius: 3px;
+            font-size: 11px; font-weight: 700; color: white;
+        }
+        .leaflet-popup-content .impact-info {
+            margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ddd;
+            font-size: 12px; color: #444;
+        }
+        .leaflet-popup-content .impact-info strong { color: #1a1a6e; }
+        .leaflet-popup-content .road-list {
+            margin: 4px 0 0 0; padding-left: 16px; font-size: 11px; color: #555;
+        }
+        .leaflet-popup-content .approx-note {
+            font-size: 10px; color: #999; font-style: italic; margin-top: 6px;
+        }
+
+        /* btn to toggle impact circle from popup */
+        .impact-btn {
+            display: inline-block; margin-top: 8px; padding: 5px 14px;
+            background: #034da2; color: white; border: none; border-radius: 4px;
+            font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit;
+        }
+        .impact-btn:hover { background: #022d6e; }
+
+        /* ---- MAP RESPONSIVE — TABLET ---- */
+        @media (max-width: 1024px) {
+            #map { height: calc(100vh - 190px); min-height: 400px; }
+            .leaflet-control-layers { min-width: 180px; }
+        }
+
+        /* ---- MAP RESPONSIVE — MOBILE ---- */
+        @media (max-width: 768px) {
+            #map { height: calc(100vh - 160px); min-height: 350px; }
+
+            /* layer control: collapsed by default, smaller when open */
+            .leaflet-control-layers { min-width: 160px; }
+            .leaflet-control-layers-base,
+            .leaflet-control-layers-overlays { padding: 6px 10px !important; }
+            .leaflet-control-layers label { font-size: 11px !important; padding: 3px 0; }
+            .leaflet-control-layers-base::before,
+            .leaflet-control-layers-overlays::before { font-size: 9px; }
+
+            /* legend smaller */
+            .impact-legend { max-width: 170px; padding: 8px 10px; font-size: 11px; }
+            .impact-legend h4 { font-size: 11px; }
+            .impact-legend .swatch { width: 10px; height: 10px; }
+
+            /* popup fits mobile */
+            .leaflet-popup-content { margin: 10px 10px !important; font-size: 12px; }
+            .leaflet-popup-content h3 { font-size: 13px; }
+            .leaflet-popup-content .road-list { font-size: 10px; }
+
+            /* scroll overlay — mobile message */
+            .scroll-overlay { font-size: 14px; padding: 0 20px; text-align: center; }
+
+            .map-btn { width: 36px; height: 36px; } /* larger touch target */
+            .impact-btn { padding: 8px 16px; font-size: 13px; } /* easier to tap */
+        }
+
+        /* ---- MAP RESPONSIVE — SMALL PHONE ---- */
+        @media (max-width: 480px) {
+            #map { height: calc(100vh - 140px); min-height: 300px; }
+            .impact-legend { max-width: 150px; font-size: 10px; }
+            .leaflet-control-layers { min-width: 140px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="tricolor"><div class="tri-s"></div><div class="tri-w"></div><div class="tri-g"></div></div>
+<div class="topbar-wrap"><div class="topbar"><span>भारत सरकार | Government of India</span><div class="topbar-right"><a href="index.html" class="top-btn top-btn-home">🏠 Home</a><a href="contact.html#feedback" class="top-btn top-btn-feedback">📝 Feedback</a><a href="contact.html#complaint" class="top-btn top-btn-complaint">⚠️ Complaint</a></div></div></div>
+
+<header class="header">
+    <div class="container">
+        <h1>National Landslide Monitoring System</h1>
+        <p class="hindi">राष्ट्रीय भूस्खलन निगरानी प्रणाली</p>
+        <p class="ministry">Ministry of Earth Sciences | पृथ्वी विज्ञान मंत्रालय</p>
+    </div>
+</header>
+
+<nav><div class="container"><ul>
+    <li><a href="index.html">Home</a></li>
+    <li><a href="alerts.html">Alerts</a></li>
+    <li><a href="zones.html">Vulnerable Zones</a></li>
+    <li><a href="map.html" class="active">Live Map</a></li>
+    <li><a href="guidelines.html">Guidelines</a></li>
+    <li><a href="reports.html">Reports</a></li>
+    <li><a href="contact.html">Contact</a></li>
+</ul></div></nav>
+
+<div id="map"></div>
+
+<footer><div class="container">
+    <p>Content Owned &amp; Maintained by Ministry of Earth Sciences, Government of India</p>
+    <p>Designed &amp; Developed by National Informatics Centre (NIC) | Last Updated: 13-09-2026</p>
+</div></footer>
+
+<div class="tricolor"><div class="tri-s"></div><div class="tri-w"></div><div class="tri-g"></div></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ============================================================
+//  ZONE DATA — reuses zones.html info + added slope & radius
+//  estimatedRadius in meters, slope in degrees
+//  ponytail: radius is a rough heuristic (risk × slope),
+//  not a geotechnical model. Upgrade: plug in GSI runout models.
+// ============================================================
+var zones = [
+    // --- Himalayas (VERY HIGH) ---
+    { name:"Joshimath",    state:"Uttarakhand",       lat:30.55, lon:79.56, risk:"VERY HIGH", slope:42, estimatedRadius:3000,
+      nearbyRoads:["NH-7 (Rishikesh-Badrinath)","Joshimath-Auli Road","Marwari-Tapovan Road"],
+      nearbyAreas:["Tapovan","Marwari","Sunil Village","Auli"] },
+    { name:"Chamoli",      state:"Uttarakhand",       lat:30.40, lon:79.33, risk:"VERY HIGH", slope:38, estimatedRadius:2800,
+      nearbyRoads:["NH-7","Chamoli-Gopeshwar Road","Nandanagar Link Road"],
+      nearbyAreas:["Gopeshwar","Nandanagar","Birahi"] },
+    { name:"Pithoragarh",  state:"Uttarakhand",       lat:29.58, lon:80.22, risk:"VERY HIGH", slope:35, estimatedRadius:2500,
+      nearbyRoads:["NH-9","Pithoragarh-Thal Road","Dharchula Highway"],
+      nearbyAreas:["Thal","Gangolihat","Dharchula"] },
+    { name:"Rudraprayag",  state:"Uttarakhand",       lat:30.28, lon:78.98, risk:"VERY HIGH", slope:40, estimatedRadius:2800,
+      nearbyRoads:["NH-7","Rudraprayag-Kedarnath Road","Ukhimath Road"],
+      nearbyAreas:["Ukhimath","Agastmuni","Tilwara"] },
+    { name:"Kinnaur (Kalpa)", state:"Himachal Pradesh",lat:31.53, lon:78.26, risk:"VERY HIGH", slope:44, estimatedRadius:3200,
+      nearbyRoads:["NH-5 (Hindustan-Tibet Road)","Kalpa-Reckong Peo Road","Sangla Valley Road"],
+      nearbyAreas:["Reckong Peo","Sangla","Chitkul","Moorang"] },
+    { name:"Kullu",        state:"Himachal Pradesh",   lat:31.96, lon:77.11, risk:"VERY HIGH", slope:32, estimatedRadius:2500,
+      nearbyRoads:["NH-3 (Manali Highway)","Kullu-Bijli Mahadev Road"],
+      nearbyAreas:["Manali","Bhuntar","Naggar"] },
+    { name:"Mandi",        state:"Himachal Pradesh",   lat:31.72, lon:76.93, risk:"VERY HIGH", slope:30, estimatedRadius:2200,
+      nearbyRoads:["NH-3","Mandi-Pathankot Road","Mandi-Kullu Road"],
+      nearbyAreas:["Sundernagar","Jogindernagar","Pandoh"] },
+    { name:"Gangtok",      state:"Sikkim",             lat:27.33, lon:88.62, risk:"VERY HIGH", slope:38, estimatedRadius:2800,
+      nearbyRoads:["NH-10","Gangtok-Nathula Road","Gangtok-Tsomgo Road"],
+      nearbyAreas:["Ranipool","Singtam","Tsomgo"] },
+
+    // --- NE Hills (HIGH) ---
+    { name:"Tawang",       state:"Arunachal Pradesh",  lat:27.59, lon:91.86, risk:"HIGH", slope:38, estimatedRadius:2000,
+      nearbyRoads:["Tawang-Bomdila Road","Sela Pass Road"],
+      nearbyAreas:["Bomdila","Jang","Lumla"] },
+    { name:"Cherrapunji",  state:"Meghalaya",          lat:25.30, lon:91.70, risk:"HIGH", slope:36, estimatedRadius:1800,
+      nearbyRoads:["Shillong-Cherrapunji Road","Mawsynram Road"],
+      nearbyAreas:["Mawsynram","Laitkynsew","Mawsmai"] },
+    { name:"Aizawl",       state:"Mizoram",            lat:23.73, lon:92.72, risk:"HIGH", slope:28, estimatedRadius:1500,
+      nearbyRoads:["NH-6 (Aizawl-Silchar)","Aizawl-Lunglei Road"],
+      nearbyAreas:["Lunglei","Kolasib","Serchhip"] },
+    { name:"Kohima",       state:"Nagaland",           lat:25.67, lon:94.11, risk:"HIGH", slope:26, estimatedRadius:1400,
+      nearbyRoads:["NH-2 (Dimapur-Kohima)","Kohima-Imphal Road"],
+      nearbyAreas:["Dimapur","Phek","Mokokchung"] },
+    { name:"Senapati",     state:"Manipur",            lat:25.27, lon:94.02, risk:"HIGH", slope:24, estimatedRadius:1300,
+      nearbyRoads:["NH-2","Imphal-Mao Road"],
+      nearbyAreas:["Mao","Kangpokpi","Karong"] },
+
+    // --- Western Ghats (HIGH / MODERATE) ---
+    { name:"Wayanad",      state:"Kerala",             lat:11.69, lon:76.08, risk:"HIGH", slope:30, estimatedRadius:1800,
+      nearbyRoads:["NH-766","Wayanad-Kozhikode Ghat Road","Meppadi-Chooralmala Road"],
+      nearbyAreas:["Meppadi","Chooralmala","Mundakkai","Vythiri"] },
+    { name:"Idukki (Munnar)", state:"Kerala",           lat:10.09, lon:77.06, risk:"HIGH", slope:32, estimatedRadius:1800,
+      nearbyRoads:["SH-17 (Munnar Road)","Munnar-Top Station Road","Gap Road"],
+      nearbyAreas:["Devikulam","Adimali","Rajamala"] },
+    { name:"Kodagu (Madikeri)", state:"Karnataka",      lat:12.42, lon:75.74, risk:"MODERATE", slope:26, estimatedRadius:1000,
+      nearbyRoads:["SH-88","Madikeri-Mangalore Road","Madikeri-Mysuru Road"],
+      nearbyAreas:["Kushalnagar","Somwarpet","Virajpet"] },
+    { name:"Nilgiris (Ooty)", state:"Tamil Nadu",       lat:11.41, lon:76.69, risk:"MODERATE", slope:28, estimatedRadius:1000,
+      nearbyRoads:["NH-181 (Ooty-Mysuru)","Ooty-Coonoor Ghat Road","Kotagiri Road"],
+      nearbyAreas:["Coonoor","Kotagiri","Wellington","Ketti"] },
+    { name:"Raigad",       state:"Maharashtra",        lat:18.52, lon:73.18, risk:"MODERATE", slope:22, estimatedRadius:800,
+      nearbyRoads:["Mumbai-Goa NH-66","Old Mumbai-Pune Road (via Lonavala)"],
+      nearbyAreas:["Mahad","Mangaon","Poladpur","Roha"] },
+    { name:"Satara (Mahabaleshwar)", state:"Maharashtra",lat:17.92, lon:73.66, risk:"MODERATE", slope:26, estimatedRadius:900,
+      nearbyRoads:["SH-72","Mahabaleshwar-Poona Road","Panchgani Road"],
+      nearbyAreas:["Panchgani","Wai","Javali"] }
+];
+
+
+// ============================================================
+//  MAP INIT
+// ============================================================
+var map = L.map('map', {
+    zoomControl: false,       // we'll add it manually in topleft
+    scrollWheelZoom: 'center', // enable scroll zoom
+    zoomSnap: 0.5,
+    zoomDelta: 0.5,
+    wheelPxPerZoomLevel: 120  // smoother zoom like Google Maps
+}).setView([23.5, 80], 5);
+
+// Zoom buttons — topleft like Google Maps
+L.control.zoom({ position: 'topleft' }).addTo(map);
+
+// Scale bar — bottomleft like Google Maps
+L.control.scale({ position: 'bottomleft', imperial: false, maxWidth: 200 }).addTo(map);
+
+// Custom pane for markers — renders BELOW overlayPane (labels)
+// so road/place names are never hidden by markers
+map.createPane('markerPane');
+map.getPane('markerPane').style.zIndex = 350;  // overlayPane is 400, so labels stay on top
+
+// --- Base layers ---
+var esriSatellite = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { attribution: 'Tiles &copy; Esri', maxZoom: 19 }
+);
+
+var osmStandard = L.tileLayer(
+    'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { attribution: '&copy; OpenStreetMap contributors', maxZoom: 19 }
+);
+
+esriSatellite.addTo(map);  // default
+
+// --- Overlay: Full OSM roads+villages (semi-transparent over satellite) ---
+// Shows ALL road names (NH, SH, village roads), gaon names, routes
+var osmRoadsOverlay = L.tileLayer(
+    'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { attribution: '&copy; OSM', maxZoom: 19, opacity: 0.55 }
+);
+
+// Esri Transportation reference — highway labels
+var esriTransport = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
+    { attribution: 'Esri', maxZoom: 19, opacity: 0.9 }
+);
+
+// Esri Boundaries + Place names (state, district, city labels)
+var esriLabels = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    { attribution: 'Esri', maxZoom: 19, opacity: 1 }
+);
+
+// Default: satellite + highway labels + place names
+esriTransport.addTo(map);
+esriLabels.addTo(map);
+
+// Layer control — collapsed on mobile, expanded on desktop
+var isMobile = window.innerWidth <= 768;
+L.control.layers(
+    { "Satellite (Esri)": esriSatellite, "Street Map (OSM)": osmStandard },
+    {
+        "Roads & Villages (OSM)": osmRoadsOverlay,
+        "Highway Labels (Esri)": esriTransport,
+        "Place Names (Esri)": esriLabels
+    },
+    { collapsed: isMobile, position: 'topright' }
+).addTo(map);
+
+
+// ============================================================
+//  RISK COLORS
+// ============================================================
+var riskColors = {
+    "VERY HIGH": { fill: "#d32f2f", border: "#b71c1c", badge: "#d32f2f" },
+    "HIGH":      { fill: "#e65100", border: "#bf360c", badge: "#e65100" },
+    "MODERATE":  { fill: "#f9a825", border: "#f57f17", badge: "#bf8000" }
+};
+
+
+// ============================================================
+//  IMPACT CIRCLES — track active circle to toggle
+// ============================================================
+var activeImpactCircle = null;
+var activeImpactMarker = null; // which marker's circle is showing
+
+function toggleImpact(zoneIndex) {
+    var z = zones[zoneIndex];
+    var rc = riskColors[z.risk];
+
+    // if same zone clicked again, remove circle
+    if (activeImpactMarker === zoneIndex && activeImpactCircle) {
+        map.removeLayer(activeImpactCircle);
+        activeImpactCircle = null;
+        activeImpactMarker = null;
+        return;
+    }
+
+    // remove previous circle
+    if (activeImpactCircle) {
+        map.removeLayer(activeImpactCircle);
+    }
+
+    // draw new circle
+    activeImpactCircle = L.circle([z.lat, z.lon], {
+        radius: z.estimatedRadius,
+        color: rc.border,
+        fillColor: rc.fill,
+        fillOpacity: 0.18,
+        weight: 2,
+        dashArray: '8,6'
+    }).addTo(map);
+
+    activeImpactMarker = zoneIndex;
+
+    // zoom to fit circle
+    map.fitBounds(activeImpactCircle.getBounds().pad(0.3));
+}
+
+
+// ============================================================
+//  MARKERS
+// ============================================================
+zones.forEach(function(z, idx) {
+    var rc = riskColors[z.risk];
+
+    // custom circle marker (colored by risk) — in markerPane so labels stay on top
+    var marker = L.circleMarker([z.lat, z.lon], {
+        radius: z.risk === "VERY HIGH" ? 10 : (z.risk === "HIGH" ? 8 : 7),
+        fillColor: rc.fill,
+        color: '#fff',
+        weight: 2,
+        fillOpacity: 0.85,
+        pane: 'markerPane'
+    }).addTo(map);
+
+    // roads list HTML
+    var roadsHTML = '<ul class="road-list">';
+    z.nearbyRoads.forEach(function(r) { roadsHTML += '<li>' + r + '</li>'; });
+    roadsHTML += '</ul>';
+
+    // areas list
+    var areasHTML = z.nearbyAreas.join(', ');
+
+    var radiusKm = (z.estimatedRadius / 1000).toFixed(1);
+
+    var popupHTML =
+        '<h3>' + z.name + '</h3>' +
+        '<div class="meta">' + z.state + ' | Slope: ' + z.slope + '°</div>' +
+        '<span class="badge" style="background:' + rc.badge + '">' + z.risk + '</span>' +
+
+        '<div class="impact-info">' +
+            '<strong>Estimated Impact Zone: ~' + radiusKm + ' km radius</strong>' +
+            '<br><strong>Roads potentially affected:</strong>' + roadsHTML +
+            '<strong>Settlements within zone:</strong> ' + areasHTML +
+        '</div>' +
+
+        '<button class="impact-btn" onclick="toggleImpact(' + idx + ')">🎯 Show/Hide Impact Area</button>' +
+
+        '<div class="approx-note">⚠ Estimated impact zone (approximate). Not a precise scientific prediction. Based on risk level &amp; slope angle heuristic.</div>';
+
+    marker.bindPopup(popupHTML, { maxWidth: 320, minWidth: 240 });
+});
+
+
+// ============================================================
+//  LEGEND (bottom-right)
+// ============================================================
+var legend = L.control({ position: 'bottomright' });
+legend.onAdd = function() {
+    var div = L.DomUtil.create('div', 'impact-legend');
+    div.innerHTML =
+        '<h4>Impact Zone Legend</h4>' +
+        '<div class="row"><span class="swatch" style="background:#d32f2f"></span> VERY HIGH — 2.2–3.2 km</div>' +
+        '<div class="row"><span class="swatch" style="background:#e65100"></span> HIGH — 1.3–2.0 km</div>' +
+        '<div class="row"><span class="swatch" style="background:#f9a825"></span> MODERATE — 0.8–1.0 km</div>' +
+        '<hr style="margin:6px 0;border-color:#ddd">' +
+        '<div style="font-size:10px;color:#888">Radius based on risk level &amp; slope.<br>Click any zone marker → Show Impact Area.</div>';
+    return div;
+};
+legend.addTo(map);
+
+
+// ============================================================
+//  GOOGLE-MAPS-STYLE CONTROLS
+// ============================================================
+
+// --- 1. Ctrl+Scroll overlay message ---
+var scrollOverlay = document.createElement('div');
+scrollOverlay.className = 'scroll-overlay';
+scrollOverlay.textContent = 'Use Ctrl + scroll to zoom the map';
+document.getElementById('map').appendChild(scrollOverlay);
+
+var scrollTimer = null;
+var mapEl = document.getElementById('map');
+
+mapEl.addEventListener('wheel', function(e) {
+    if (!e.ctrlKey) {
+        scrollOverlay.classList.add('visible');
+        clearTimeout(scrollTimer);
+        scrollTimer = setTimeout(function() {
+            scrollOverlay.classList.remove('visible');
+        }, 1500);
+    }
+}, { passive: true });
+
+// Only allow scroll-zoom when Ctrl is held
+map.scrollWheelZoom.disable();
+mapEl.addEventListener('wheel', function(e) {
+    if (e.ctrlKey) {
+        e.preventDefault();
+        map.scrollWheelZoom.enable();
+        clearTimeout(scrollTimer);
+        scrollOverlay.classList.remove('visible');
+        setTimeout(function() { map.scrollWheelZoom.disable(); }, 400);
+    }
+}, { passive: false });
+
+
+// --- 2. Home button (reset view) ---
+var homeControl = L.control({ position: 'topleft' });
+homeControl.onAdd = function() {
+    var btn = L.DomUtil.create('button', 'map-btn');
+    btn.title = 'Reset view (all India)';
+    btn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>';
+    btn.onclick = function(e) {
+        e.stopPropagation();
+        map.setView([23.5, 80], 5, { animate: true });
+        if (activeImpactCircle) { map.removeLayer(activeImpactCircle); activeImpactCircle = null; activeImpactMarker = null; }
+    };
+    L.DomEvent.disableClickPropagation(btn);
+    return btn;
+};
+homeControl.addTo(map);
+
+
+// --- 3. Locate me button ---
+var locateSvg = '<svg viewBox="0 0 24 24"><path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3A8.994 8.994 0 0 0 13 3.06V1h-2v2.06A8.994 8.994 0 0 0 3.06 11H1v2h2.06A8.994 8.994 0 0 0 11 20.94V23h2v-2.06A8.994 8.994 0 0 0 20.94 13H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/></svg>';
+var locateControl = L.control({ position: 'topleft' });
+locateControl.onAdd = function() {
+    var btn = L.DomUtil.create('button', 'map-btn');
+    btn.title = 'My location';
+    btn.innerHTML = locateSvg;
+    var locMarker = null;
+    btn.onclick = function(e) {
+        e.stopPropagation();
+        if (!navigator.geolocation) { alert('Geolocation not supported by your browser.'); return; }
+        btn.style.opacity = '0.5';
+        navigator.geolocation.getCurrentPosition(function(pos) {
+            var latlng = [pos.coords.latitude, pos.coords.longitude];
+            if (locMarker) map.removeLayer(locMarker);
+            locMarker = L.circleMarker(latlng, {
+                radius: 8, fillColor: '#034da2', color: '#fff',
+                weight: 3, fillOpacity: 1
+            }).addTo(map).bindPopup('Your Location').openPopup();
+            map.setView(latlng, 12, { animate: true });
+            btn.style.opacity = '1';
+        }, function() {
+            alert('Unable to retrieve your location.');
+            btn.style.opacity = '1';
+        }, { enableHighAccuracy: true, timeout: 8000 });
+    };
+    L.DomEvent.disableClickPropagation(btn);
+    return btn;
+};
+locateControl.addTo(map);
+
+
+// --- 4. Fullscreen button ---
+var fsControl = L.control({ position: 'topright' });
+fsControl.onAdd = function() {
+    var btn = L.DomUtil.create('button', 'map-btn');
+    btn.title = 'Fullscreen';
+    btn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>';
+    btn.onclick = function(e) {
+        e.stopPropagation();
+        var el = document.getElementById('map');
+        if (!document.fullscreenElement) {
+            (el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen).call(el);
+        } else {
+            (document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen).call(document);
+        }
+    };
+    document.addEventListener('fullscreenchange', function() {
+        setTimeout(function() { map.invalidateSize(); }, 200);
+    });
+    L.DomEvent.disableClickPropagation(btn);
+    return btn;
+};
+fsControl.addTo(map);
+</script>
+
+</body>
+</html>
